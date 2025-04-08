@@ -33,7 +33,6 @@ spinner() {
 	printf "    \b\b\b\b"
 }
 
-
 configure_env() {
 	echo -e "\n${GEAR} ${YELLOW}Configuring environment...${NC}"
 	export NP_LOCATION="$INSTALL_DIR"
@@ -41,6 +40,13 @@ configure_env() {
 	export NP_GIT="$(which git)"
 	echo -e "${CHECK} ${GREEN}Environment configured!${NC}"
 }
+
+remove_lock() {
+	if [[ -d $INSTALL_DIR/.nix-portable/nix/var/nix/db/db.sqlite.lock ]]; then
+		rm -rf $INSTALL_DIR/.nix-portable/nix/var/nix/db/db.sqlite.lock
+	fi
+}
+
 
 setup_nix_portable() {
 	echo -e "\n${BLUE}${ROCKET} Installing Nix-Portable ${ROCKET}${NC}"
@@ -71,7 +77,6 @@ install_apache_php() {
   PHP_VERSION=$(<$CONF_DIR/php-version.conf)
 
   echo -e "${GEAR} Checking Apache and ${PHP_VERSION}..."
-
   nix-portable nix-shell -p apacheHttpd "$PHP_VERSION" --run "httpd -v && php -v"
 }
 
@@ -279,6 +284,7 @@ main_menu(){
 	done
 }
 
+remove_lock
 configure_env
 [[ ! -f "$INSTALL_DIR/bin/nix-portable" ]] && setup_nix_portable
 install_apache_php
