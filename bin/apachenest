@@ -33,66 +33,61 @@ spinner() {
 	printf "    \b\b\b\b"
 }
 
+
+configure_env() {
+	echo -e "\n${GEAR} ${YELLOW}Configuring environment...${NC}"
+	export NP_LOCATION="$INSTALL_DIR"
+	export PATH="$PATH:$INSTALL_DIR/bin"
+	export NP_GIT="$(which git)"
+	echo -e "${CHECK} ${GREEN}Environment configured!${NC}"
+}
+
 setup_nix_portable() {
 	echo -e "\n${BLUE}${ROCKET} Installing Nix-Portable ${ROCKET}${NC}"
-	echo -e "${YELLOW}📁 Target directory: ${GREEN}$INSTALL_DIR${NC}\n"
-
-	# Create directory structure
 	echo -e "${GEAR} ${YELLOW}Creating directory structure...${NC}"
 	mkdir -p "$INSTALL_DIR/bin"
+	[[ -d "$WWW_DIR" ]] || mkdir -p "$WWW_DIR"
+	[[ -d "$CONF_DIR" ]] || mkdir -p "$CONF_DIR"
+	[[ -d "$INSTALL_DIR/apache" ]] || mkdir -p "$INSTALL_DIR/apache"
+	[[ -d "$INSTALL_DIR/apache/logs" ]] || mkdir -p "$INSTALL_DIR/apache/logs"
 	echo -e "${CHECK} ${GREEN}Directories created!${NC}"
 
-	# Download nix-portable
 	echo -e "\n${DOWNLOAD} ${YELLOW}Downloading nix-portable...${NC}"
 	curl -L https://github.com/DavHau/nix-portable/releases/latest/download/nix-portable-$(uname -m) > $INSTALL_DIR/bin/nix-portable
 	chmod +x "$INSTALL_DIR/bin/nix-portable"
 	echo -e "${CHECK} ${GREEN}Download complete!${NC}"
 
-	# Verify installation
 	echo -e "\n${HOURGLASS} ${YELLOW}Verifying installation...${NC}"
 	nix-portable nix-shell --version
 	echo -e "${CHECK} ${GREEN}Verification complete!${NC}"
 	echo -e "\n${SUCCESS} ${GREEN}Installation complete!${NC}"
 }
 
-echo -e "\n${GEAR} ${YELLOW}Configuring environment...${NC}"
-export NP_LOCATION="$INSTALL_DIR"
-export PATH="$PATH:$INSTALL_DIR/bin"
-export NP_GIT="$(which git)"
-echo -e "${CHECK} ${GREEN}Environment configured!${NC}"
+install_apache_php() {
+  if [[ ! -f $CONF_DIR/php-version.conf ]]; then
+    echo "php82" > $CONF_DIR/php-version.conf
+  fi
 
-[[ ! -f "$INSTALL_DIR/bin/nix-portable" ]] && setup_nix_portable
+  PHP_VERSION=$(<$CONF_DIR/php-version.conf)
 
-nix-portable nix-shell -p apacheHttpd php82 --run "
-echo -e '\n${CHECK} Apache version:'
-httpd -v
-echo -e '\n${CHECK} PHP version:'
-php --version
-"
+  echo -e "${GEAR} Checking Apache and ${PHP_VERSION}..."
 
-echo -e "\n${GEAR} ${YELLOW}Setting up ApacheNest directories...${NC}"
-mkdir -p "$WWW_DIR"
-mkdir -p "$CONF_DIR"
-mkdir -p "$INSTALL_DIR/apache"
-mkdir -p "$INSTALL_DIR/apache/logs"
-
-APACHE_PATH=$(nix-portable nix-shell -p apacheHttpd --run "echo \$(dirname \$(dirname \$(which httpd)))")
-echo -e "${CHECK} ${GREEN}Apache found at: ${BLUE}$APACHE_PATH${NC}"
+  nix-portable nix-shell -p apacheHttpd "$PHP_VERSION" --run "httpd -v && php -v"
+}
 
 
-cat > "$WWW_DIR/index.php" <<EOF
-<?php phpinfo(); ?>
-EOF
-
-cat > "$CONF_DIR/php-fpm.conf" <<EOF
+setup_configs() {
+	APACHE_PATH=$(nix-portable nix-shell -p apacheHttpd --run "echo \$(dirname \$(dirname \$(which httpd)))")
+	echo -e "\n${GEAR} ${YELLOW}Setting up ApacheNest configs...${NC}"
+	
+	if [[ ! -f "$CONF_DIR/php-fpm.conf" ]]; then
+	cat > "$CONF_DIR/php-fpm.conf" <<EOF
 [global]
 error_log = $INSTALL_DIR/php-fpm.log
 
 [www]
 listen = 127.0.0.1:9000
 listen.allowed_clients = 127.0.0.1
-user = nobody
-group = nogroup
 pm = dynamic
 pm.max_children = 5
 pm.start_servers = 2
@@ -100,8 +95,10 @@ pm.min_spare_servers = 1
 pm.max_spare_servers = 3
 chdir = /
 EOF
+	fi
 
-cat > "$CONF_DIR/httpd.conf" <<EOF
+	if [[ ! -f "$CONF_DIR/httpd.conf" ]]; then
+	cat > "$CONF_DIR/httpd.conf" <<EOF
 ServerName 127.0.0.1
 ServerRoot "$INSTALL_DIR/apache"
 Listen 8080
@@ -115,26 +112,175 @@ LoadModule unixd_module $APACHE_PATH/modules/mod_unixd.so
 
 DocumentRoot "$WWW_DIR"
 <Directory "$WWW_DIR">
-    Require all granted
+		Require all granted
 </Directory>
 
 DirectoryIndex index.php index.html
 
 <FilesMatch \.php$>
-    SetHandler "proxy:fcgi://127.0.0.1:9000"
+		SetHandler "proxy:fcgi://127.0.0.1:9000"
 </FilesMatch>
 
 TypesConfig $APACHE_PATH/conf/mime.types
 EOF
+	fi
 
-echo -e "${CHECK} ${GREEN}ApacheNest config ready!${NC}"
+	echo -e "${CHECK} ${GREEN}ApacheNest config ready!${NC}"
+}
 
-# Run both PHP-FPM and Apache inside nix-portable shell
-echo -e "\n${ROCKET} ${YELLOW}Launching ApacheNest...${NC}"
+select_php() {
+	stop_php
+  local CURRENT_VERSION=$PHP_VERSION
+  [[ -f php-version.conf ]] && CURRENT_VERSION=$(<php-version.conf)
 
-nix-portable nix-shell -p apacheHttpd php82 --run "
-trap 'pkill -P $$' EXIT  # Cleanup child processes on exit
-php-fpm -y $CONF_DIR/php-fpm.conf &
-httpd -f $CONF_DIR/httpd.conf &
-wait  # Keep shell alive
-"
+  local PHP_VERSIONS
+  PHP_VERSIONS=$(
+    nix-portable nix search nixpkgs "php-with-extensions" --exclude "apacheHttpdPackages" --json \
+      | jq -r 'keys[] | select(test("php8[1-4]$")) | sub(".*\\."; "")'
+  )
+
+  local SORTED_VERSIONS
+  SORTED_VERSIONS=$(
+    printf "%s\n" $CURRENT_VERSION $PHP_VERSIONS \
+      | awk '!seen[$0]++'
+  )
+
+  local SELECTED_VERSION
+  SELECTED_VERSION=$(printf "%s\n" $SORTED_VERSIONS | fzf --height=10% --border --highlight-line --padding=0,30% --header-lines=1 --prompt="Select PHP version: ")
+
+  echo "$SELECTED_VERSION" > $CONF_DIR/php-version.conf
+}
+
+
+start_apache(){
+	nix-portable nix-shell -p apacheHttpd --run "
+		httpd -f $CONF_DIR/httpd.conf &
+	" 
+}
+
+start_php(){
+	nix-portable nix-shell -p $PHP_VERSION  --run "
+		php-fpm -y $CONF_DIR/php-fpm.conf &
+	" 
+}
+
+stop_apache(){
+	pkill -f "$CONF_DIR/httpd.conf"
+}
+
+stop_php(){
+	pkill -f "$CONF_DIR/php-fpm.conf"
+}
+
+restart_apache(){
+	stop_apache && sleep 1
+	start_apache
+}
+
+restart_php(){
+	stop_php && sleep 1
+	start_php
+}
+
+apache_menu(){
+	local ACTIONS
+	local SELECTED_ACTION
+	
+	while true; do
+		ACTIONS=($(if ! pgrep -af "$CONF_DIR/httpd.conf" > /dev/null; then 
+			echo Start
+		else
+			echo Stop
+		fi) "Restart" "Refresh" "Back")
+		
+		SELECTED_ACTION=$(printf "%s\n" "${ACTIONS[@]}" | fzf --border --highlight-line --height=10% --layout=reverse)
+		[[ -z $SELECTED_ACTION ]] && break
+		case $SELECTED_ACTION in
+			"Start")
+			 	start_apache & spinner ;;
+			"Stop")
+			 	stop_apache & spinner ;;
+			"Restart")
+				restart_apache & spinner ;;
+			"Back")
+				break ;;
+		esac
+	done
+	
+}
+
+php_menu(){
+	local ACTIONS
+	local SELECTED_ACTION
+	
+	while true; do
+		ACTIONS=($(if ! pgrep -af "$CONF_DIR/php-fpm.conf" > /dev/null; then 
+			echo Start
+		else
+			echo Stop
+		fi) "Restart" "Refresh" "Back")
+		
+		SELECTED_ACTION=$(printf "%s\n" "${ACTIONS[@]}" | fzf --border --highlight-line --height=10% --layout=reverse)
+		[[ -z $SELECTED_ACTION ]] && break
+		case $SELECTED_ACTION in
+			"Start")
+			 	start_php & spinner ;;
+			"Stop")
+			 	stop_php & spinner ;;
+			"Restart")
+				restart_php & spinner ;;
+			"Back")
+				break ;;
+		esac
+	done
+	
+}
+
+main_menu(){
+	local ACTIONS
+	local SELECTED_ACTION
+	ACTIONS=("All" "Apache" "PHP" "Refresh" "Settings" "Exit")
+	while true; do
+		SELECTED_ACTION=$(printf "%s\n" "${ACTIONS[@]}" | fzf --border --highlight-line --height=10% --layout=reverse \
+		--preview-window=80%:wrap --preview='
+		SELECTED={}
+		if [[ $SELECTED == "Apache" ]]; then
+			echo "Status: '$(if ! pgrep -af "$CONF_DIR/httpd.conf" > /dev/null; then 
+				echo 🟥Inactive 
+			else
+				echo 🟩Active 
+			fi)'"
+		  nix-portable nix-shell -p apacheHttpd --run "httpd -v"
+		  echo -e "\n===Logs===\n"
+		  [[ -f '$INSTALL_DIR'/apache/logs/error_log ]] && cat '$INSTALL_DIR'/apache/logs/error_log
+		fi
+		if [[ $SELECTED == "PHP" ]]; then
+			echo "Status: '$(if ! pgrep -af "$CONF_DIR/php-fpm.conf" > /dev/null; then 
+				echo 🟥Inactive 
+			else
+				echo 🟩Active 
+			fi)'"
+		  nix-portable nix-shell -p '$PHP_VERSION' --run "php -v"
+		  echo -e "\n===Logs===\n"
+		  [[ -f '$INSTALL_DIR'/php-fpm.log ]] && cat '$INSTALL_DIR'/php-fpm.log
+		fi
+		')
+		[[ -z $SELECTED_ACTION ]] && break
+		case $SELECTED_ACTION in
+			"Apache")
+			 	apache_menu ;;
+			"PHP")
+			 	php_menu ;;
+			"Settings")
+				echo Settings ;;
+			"Exit")
+				break ;;
+		esac
+	done
+}
+
+configure_env
+[[ ! -f "$INSTALL_DIR/bin/nix-portable" ]] && setup_nix_portable
+install_apache_php
+setup_configs
+main_menu
