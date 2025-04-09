@@ -178,7 +178,7 @@ select_php() {
   )
 
  
-  local SELECTED_VERSION=$(printf "%s\n" $SORTED_VERSIONS | fzf --border --highlight-line --height=10% --layout=reverse --prompt="Select PHP version: ")
+  local SELECTED_VERSION=$(printf "%s\n" $SORTED_VERSIONS | fzf --border --highlight-line --height=10% --layout=reverse --prompt="Select PHP version > ")
 	[[ -z $SELECTED_VERSION ]] && return
 	PHP_VERSION=$SELECTED_VERSION
   echo "$SELECTED_VERSION" > $CONF_DIR/php-version.conf
@@ -187,30 +187,28 @@ select_php() {
 }
 
 start_apache(){
-	echo -e "\n${ROCKET} ${YELLOW}Starting Apache...${NC}"
 	nix-portable nix-shell -p apacheHttpd --run "
 		httpd -f $CONF_DIR/httpd.conf &
-	" 
+	"
 }
 
 start_php(){
-	echo -e "\n${ROCKET} ${YELLOW}Starting PHP-FPM...${NC}"
 	nix-portable nix-shell -p $PHP_VERSION  --run "
 		php-fpm -y $CONF_DIR/php-fpm.conf &
-	" 
+	"
 }
 
 stop_apache(){
 	if pgrep -af "$CONF_DIR/httpd.conf" > /dev/null; then 
-		echo -e "\n${ERROR} ${YELLOW}Stopping Apache...${NC}"
 		pkill -f "$CONF_DIR/httpd.conf"
+		sleep 1
 	fi
 }
 
 stop_php(){
 	if pgrep -af "$CONF_DIR/php-fpm.conf" > /dev/null; then 
-		echo -e "\n${ERROR} ${YELLOW}Stopping PHP-FPM...${NC}"
 		pkill -f "$CONF_DIR/php-fpm.conf"
+		sleep 1
 	fi
 }
 
@@ -224,6 +222,44 @@ restart_php(){
 	start_php
 }
 
+start_all(){
+	if ! pgrep -af "$CONF_DIR/httpd.conf" > /dev/null; then 
+		start_apache
+	fi
+	if ! pgrep -af "$CONF_DIR/php-fpm.conf" > /dev/null; then 
+		start_php
+	fi
+}
+
+stop_all(){
+	stop_apache
+	stop_php
+}
+
+restart(){
+	restart_apache
+	restart_php
+}
+
+all_menu(){
+	local ACTIONS
+	
+	while true; do
+		ACTIONS=("Start" "Stop" "Restart" "Refresh")
+		
+		local SELECTED_ACTION=$(printf "%s\n" "${ACTIONS[@]}" | fzf --border --highlight-line --height=10% --layout=reverse --prompt="All > ")
+		[[ -z $SELECTED_ACTION ]] && break
+		case $SELECTED_ACTION in
+			"Start")
+			 	start_all & spinner ;;
+			"Stop")
+			 	stop_all & spinner ;;
+			"Restart")
+				restart_all & spinner ;;
+		esac
+	done
+}
+
 apache_menu(){
 	local ACTIONS
 	
@@ -234,7 +270,7 @@ apache_menu(){
 			echo Stop
 		fi) "Restart" "Refresh")
 		
-		local SELECTED_ACTION=$(printf "%s\n" "${ACTIONS[@]}" | fzf --border --highlight-line --height=10% --layout=reverse)
+		local SELECTED_ACTION=$(printf "%s\n" "${ACTIONS[@]}" | fzf --border --highlight-line --height=10% --layout=reverse --prompt="Apache > ")
 		[[ -z $SELECTED_ACTION ]] && break
 		case $SELECTED_ACTION in
 			"Start")
@@ -257,7 +293,7 @@ php_menu(){
 			echo Stop
 		fi) "Restart" "Change Version" "Refresh")
 		
-		local SELECTED_ACTION=$(printf "%s\n" "${ACTIONS[@]}" | fzf --border --highlight-line --height=10% --layout=reverse)
+		local SELECTED_ACTION=$(printf "%s\n" "${ACTIONS[@]}" | fzf --border --highlight-line --height=10% --layout=reverse --prompt="PHP > ")
 		[[ -z $SELECTED_ACTION ]] && break
 		case $SELECTED_ACTION in
 			"Start")
@@ -276,9 +312,22 @@ main_menu(){
 	local ACTIONS
 	ACTIONS=("All" "Apache" "PHP" "Refresh" "Settings" "Exit")
 	while true; do
+		remove_dblock
 		local SELECTED_ACTION=$(printf "%s\n" "${ACTIONS[@]}" | fzf --border --highlight-line --height=10% --layout=reverse \
 		--preview-window=80%:wrap --preview='
 		SELECTED={}
+		if [[ $SELECTED == "All" ]]; then
+			echo -e "Apache status: \t'$(if ! pgrep -af "$CONF_DIR/httpd.conf" > /dev/null; then 
+				echo 🟥Inactive 
+			else
+				echo 🟩Active 
+			fi)'"
+			echo -e "PHP status: \t'$(if ! pgrep -af "$CONF_DIR/php-fpm.conf" > /dev/null; then 
+				echo 🟥Inactive 
+			else
+				echo 🟩Active 
+			fi)'"
+		fi
 		if [[ $SELECTED == "Apache" ]]; then
 			echo "Status: '$(if ! pgrep -af "$CONF_DIR/httpd.conf" > /dev/null; then 
 				echo 🟥Inactive 
@@ -302,6 +351,8 @@ main_menu(){
 		')
 		[[ -z $SELECTED_ACTION ]] && break
 		case $SELECTED_ACTION in
+			"All")
+				all_menu ;;
 			"Apache")
 			 	apache_menu ;;
 			"PHP")
