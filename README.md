@@ -76,6 +76,7 @@ Logs for both Apache and PHP services are stored in:
 ## Troubleshooting
 
 If you encounter issues with database locks, ApacheNest will automatically detect and remove them.
+Or just select Refresh
 
 ## Uninstallation
 
