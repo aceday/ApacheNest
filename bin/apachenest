@@ -236,6 +236,7 @@ all_menu(){
 	local ACTIONS
 	
 	while true; do
+		remove_dblock
 		ACTIONS=("Start" "Stop" "Restart" "Refresh")
 		
 		local SELECTED_ACTION=$(printf "%s\n" "${ACTIONS[@]}" | fzf --border --highlight-line --height=10% --layout=reverse --prompt="All > ")
