@@ -15,7 +15,7 @@ ApacheNest is a shell-based utility for setting up and managing a lightweight Ap
 ### Homebrew
 
 ```sh
-brew install JianZcar/packages/fuzpad
+brew install JianZcar/packages/apachenest
 ```
 
 ### Git Clone
