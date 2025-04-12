@@ -29,7 +29,7 @@ jobs:
           cat > apachenest.rb <<EOF
           class Apachenest < Formula
             desc "Minimalistic Apache + PHP environment manager."
-            homepage "https://github.com/JianZcar/FuzPad"
+            homepage "https://github.com/JianZcar/ApacheNest"
             url "https://github.com/JianZcar/ApacheNest/releases/download/${{ env.LATEST_TAG }}/apachenest.tar.gz"
             sha256 "$SHA256"
             license "GPL-3.0-or-later"
