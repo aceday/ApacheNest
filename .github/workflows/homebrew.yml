@@ -52,7 +52,7 @@ jobs:
 
       - name: Move updated formula to homebrew-packages 
         run: |
-          mv fuzpad.rb homebrew-packages/Formula/apachenest.rb
+          mv apachenest.rb homebrew-packages/Formula/apachenest.rb
 
       - name: Commit and push changes
         env:
