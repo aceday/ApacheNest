@@ -1,0 +1,66 @@
+name: Update Homebrew Formula
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types:
+      - completed
+
+jobs:
+  update-formula:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          ref: main 
+
+      - name: Get the latest tag
+        id: get-latest-tag
+        run: echo "LATEST_TAG=$(git tag --sort=-creatordate | head -n 1)" >> $GITHUB_ENV
+
+      - name: Update Homebrew Formula
+        run: |
+          LATEST_TAG=${{ steps.get-latest-tag.outputs.LATEST_TAG }} 
+          SHA256=$(curl -sL https://github.com/JianZcar/ApacheNest/releases/download/${{ env.LATEST_TAG }}/apachenest.tar.gz | sha256sum | awk '{print $1}')
+          
+          cat > apachenest.rb <<EOF
+          class Apachenest < Formula
+            desc "Minimalistic Apache + PHP environment manager."
+            homepage "https://github.com/JianZcar/FuzPad"
+            url "https://github.com/JianZcar/ApacheNest/releases/download/${{ env.LATEST_TAG }}/apachenest.tar.gz"
+            sha256 "$SHA256"
+            license "GPL-3.0-or-later"
+
+            depends_on "jq"
+            depends_on "fzf"
+
+            def install
+              bin.install "apachenest" => "apachenest"
+            end
+          end
+          EOF
+
+      - name: Checkout homebrew-packages  repository
+        uses: actions/checkout@v2
+        with:
+          repository: JianZcar/homebrew-packages 
+          token: ${{ secrets.TOKEN }}
+          path: homebrew-packages 
+
+      - name: Move updated formula to homebrew-packages 
+        run: |
+          mv fuzpad.rb homebrew-packages/Formula/apachenest.rb
+
+      - name: Commit and push changes
+        env:
+          GITHUB_TOKEN: ${{ secrets.TOKEN }}
+        run: |
+          cd homebrew-packages 
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/apachenest.rb
+          git commit -m "(ApacheNest Update) Update Homebrew formula for ApacheNest version ${{ env.LATEST_TAG }}"
+          git push https://x-access-token:${GITHUB_TOKEN}@github.com/JianZcar/homebrew-packages.git HEAD:main
