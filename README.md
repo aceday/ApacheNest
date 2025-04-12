@@ -2,6 +2,9 @@
 
 ApacheNest is a shell-based utility for setting up and managing a lightweight Apache + PHP environment using Nix Portable. It provides a streamlined way to configure and control Apache and PHP installations, making local development and testing quick and simple.
 
+### Dev note
+ApacheNest is still in its early phase but is now usable.
+
 ## Features
 
 - Easy setup for Apache and PHP with Nix Portable.
