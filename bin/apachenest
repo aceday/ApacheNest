@@ -152,6 +152,7 @@ EOF
 		echo -e "${CHECK} ${GREEN}MySQL PID file created!${NC}"
 	fi
 	
+<<<<<<< HEAD
 	# Check if MySQL is running and offer to secure it
 	if pgrep -af "mysqld" > /dev/null; then
 		echo -e "${YELLOW}MySQL server is running!${NC}"
@@ -202,6 +203,11 @@ secure_mysql() {
 	fi
 }
 
+=======
+	echo -e "${SUCCESS} ${GREEN}MySQL configuration complete!${NC}"
+}
+
+>>>>>>> refs/remotes/origin/main
 
 setup_apache_php() {
   echo "php82" > $CONF_DIR/php-version.conf
@@ -353,6 +359,7 @@ start_mysql(){
 	nix-portable nix-shell -p mysql --run "
 		mysqld_safe --defaults-file=$INSTALL_DIR/mysql/my.cnf &
 	" > "$MYSQLD_LOG" 2>&1 &
+<<<<<<< HEAD
 	
 	# Wait for MySQL to fully start and create socket
 	echo -e "${YELLOW}Waiting for MySQL to start...${NC}"
@@ -373,6 +380,10 @@ start_mysql(){
 		echo -e "\n${ERROR} ${RED}MySQL failed to start properly. Check logs: $MYSQLD_LOG${NC}"
 	fi
 	
+=======
+	sleep 2
+	echo -e "${CHECK} ${GREEN}MySQL started!${NC}"
+>>>>>>> refs/remotes/origin/main
 	clear
 }
 
@@ -537,6 +548,12 @@ restart_mysql() {
 	start_mysql
 }
 
+<<<<<<< HEAD
+=======
+mysql_reset() {
+	sh -c " \"\"'"
+}
+>>>>>>> refs/remotes/origin/main
 
 mysql_menu() {
 	clear
@@ -544,7 +561,11 @@ mysql_menu() {
 	echo -e "\n${BLUE}${ROCKET} ${TITLE} ${ROCKET}${NC}"
 	while true; do
 		remove_dblock
+<<<<<<< HEAD
 		ACTIONS=("Start" "Stop" "Restart" "Refresh" "Config" "Security")
+=======
+		ACTIONS=("Start" "Stop" "Restart" "Refresh" "Config")
+>>>>>>> refs/remotes/origin/main
 		
 		local SELECTED_ACTION=$(printf "%s\n" "${ACTIONS[@]}" | fzf --border --highlight-line --height=10% --layout=reverse --prompt="MySQL > ")
 		[[ -z $SELECTED_ACTION ]] && break
@@ -559,8 +580,11 @@ mysql_menu() {
 				refresh_menu ;;
 			"Config")
 				config_mysql ;;
+<<<<<<< HEAD
 			"Security")
 				secure_mysql ;;
+=======
+>>>>>>> refs/remotes/origin/main
 		esac
 	done
 	clear
