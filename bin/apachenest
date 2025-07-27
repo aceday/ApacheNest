@@ -82,6 +82,16 @@ install_php() {
 		echo -e "${DOWNLOAD} ${YELLOW}Downloading $PHP_VERSION...${NC}"
 		nix-portable nix-shell -p "$PHP_VERSION" --run "" 2>/dev/null & spinner
 		echo -e "${CHECK} ${GREEN}Download complete!${NC}"
+
+		echo "<?php phpinfo(); ?>" > "$WWW_DIR/index.php"
+	fi
+}
+
+install_mysql() {
+	if ! nix-portable nix path-info -f '<nixpkgs>' mysql.out >/dev/null 2>&1; then
+		echo -e "${DOWNLOAD} ${YELLOW}Downloading MySQL...${NC}"
+		nix-portable nix-shell -p mysql --run "" 2>/dev/null & spinner
+		echo -e "${CHECK} ${GREEN}Download complete!${NC}"
 	fi
 }
 
@@ -142,10 +152,17 @@ EOF
 	echo -e "${SUCCESS} ${GREEN}ApacheNest config ready!${NC}\n"
 }
 
+setup_mysql() {
+	echo -e "${YELLOW}Installing MySQL ${NC}"
+	install_mysql
+}
+
 setup_apachenest(){
 	setup_nix_portable
 	setup_apache_php
 	setup_configs
+
+	setup_mysql
 }
 
 select_php() {
@@ -330,7 +347,47 @@ php_menu(){
 	clear
 }
 
-# How about refreshing the main menu?
+mysql_start() {
+	clear
+}
+
+mysql_stop() {
+	clear
+}
+
+mysql_restart() {
+	clear
+	mysql_stop
+	mysql_start
+}
+
+mysql_reset() {
+	sh -c " \"\"'"
+}
+mysql_menu() {
+	clear
+	local ACTIONS
+	echo -e "\n${BLUE}${ROCKET} ${TITLE} ${ROCKET}${NC}"
+	while true; do
+		remove_dblock
+		ACTIONS=("Start" "Stop" "Restart" "Refresh")
+		
+		local SELECTED_ACTION=$(printf "%s\n" "${ACTIONS[@]}" | fzf --border --highlight-line --height=10% --layout=reverse --prompt="MySQL > ")
+		[[ -z $SELECTED_ACTION ]] && break
+		case $SELECTED_ACTION in
+			"Start")
+			 	echo -e "${YELLOW}MySQL start is not implemented yet.${NC}" ;;
+			"Stop")
+			 	echo -e "${YELLOW}MySQL stop is not implemented yet.${NC}" ;;
+			"Restart")
+				echo -e "${YELLOW}MySQL restart is not implemented yet.${NC}" ;;
+			"Refresh")
+				refresh_menu ;;
+		esac
+	done
+	clear
+}
+
 refresh_menu() {
 	clear
 }
@@ -338,7 +395,7 @@ refresh_menu() {
 main_menu(){
 	clear
 	local ACTIONS
-	ACTIONS=("All" "Apache" "PHP" "Refresh" "Settings" "About")
+	ACTIONS=("All" "Apache" "PHP" "MySQL" "Refresh" "Settings" "About" "Exit")
 	while true; do
 		remove_dblock
 		printf "\n${BLUE}${ROCKET} ${TITLE} ${ROCKET}${NC}\n"
@@ -386,12 +443,16 @@ main_menu(){
 			 	apache_menu ;;
 			"PHP")
 			 	php_menu ;;
+			"MySQL")
+				mysql_menu ;;
 			"Refresh")
 				refresh_menu ;;
 			"Settings")
 				echo Settings ;;
 			"About")
 				about ;;
+			"Exit")
+				bye ;;
 		esac
 	done
 	clear
