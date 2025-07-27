@@ -95,6 +95,113 @@ install_mysql() {
 	fi
 }
 
+config_mysql() {
+	echo -e "${YELLOW}Setting up MySQL...${NC}"
+	
+	# Create MySQL directories
+	if [[ ! -d $INSTALL_DIR/mysql ]]; then
+		mkdir -p "$INSTALL_DIR/mysql"
+		echo -e "${CHECK} ${GREEN}MySQL directory created!${NC}"
+	fi
+	
+	if [[ ! -d $INSTALL_DIR/mysql/data ]]; then
+		mkdir -p "$INSTALL_DIR/mysql/data"
+		echo -e "${CHECK} ${GREEN}MySQL data directory created!${NC}"
+	fi
+	
+	# Create MySQL configuration file
+	if [[ ! -f $INSTALL_DIR/mysql/my.cnf ]]; then
+		echo -e "${YELLOW}Creating MySQL config...${NC}"
+		cat > "$INSTALL_DIR/mysql/my.cnf" <<EOF
+[mysqld]
+datadir = $INSTALL_DIR/mysql/data
+socket = $INSTALL_DIR/mysql/mysql.sock
+user = $(whoami)
+bind-address = 127.0.0.1
+port = 3306
+skip-external-locking
+default_storage_engine = InnoDB
+innodb_file_per_table = 1
+innodb_log_file_size = 64M
+log-error = $INSTALL_DIR/mysql/mysql.log
+pid-file = $INSTALL_DIR/mysql/mysql.pid
+tmpdir = $INSTALL_DIR/mysql
+
+[mysqld_safe]
+log-error = $INSTALL_DIR/mysql/mysql.log
+pid-file = $INSTALL_DIR/mysql/mysql.pid
+
+[mysql]
+socket = $INSTALL_DIR/mysql/mysql.sock
+
+[client]
+socket = $INSTALL_DIR/mysql/mysql.sock
+EOF
+		echo -e "${CHECK} ${GREEN}MySQL config created!${NC}"
+	fi
+
+	# Create log file
+	if [[ ! -f $INSTALL_DIR/mysql/mysql.log ]]; then
+		touch "$INSTALL_DIR/mysql/mysql.log"
+		echo -e "${CHECK} ${GREEN}MySQL log file created!${NC}"
+	fi
+
+	# Create PID file
+	if [[ ! -f $INSTALL_DIR/mysql/mysql.pid ]]; then
+		touch "$INSTALL_DIR/mysql/mysql.pid"
+		echo -e "${CHECK} ${GREEN}MySQL PID file created!${NC}"
+	fi
+	
+	# Check if MySQL is running and offer to secure it
+	if pgrep -af "mysqld" > /dev/null; then
+		echo -e "${YELLOW}MySQL server is running!${NC}"
+		echo -e "${BLUE}Would you like to run mysql_secure_installation to set up security? (y/n)${NC}"
+		read -n 1 -r
+		echo
+		if [[ $REPLY =~ ^[Yy]$ ]]; then
+			echo -e "${YELLOW}Running MySQL security setup...${NC}"
+			nix-portable nix-shell -p mysql --run "
+				mysql_secure_installation --socket=$INSTALL_DIR/mysql/mysql.sock
+			"
+			echo -e "${CHECK} ${GREEN}MySQL security setup completed!${NC}"
+		fi
+	else
+		echo -e "${YELLOW}MySQL server is not running. Start MySQL first to run security configuration.${NC}"
+	fi
+	
+	echo -e "${SUCCESS} ${GREEN}MySQL configuration complete!${NC}"
+}
+
+secure_mysql() {
+	echo -e "${YELLOW}MySQL Security Configuration${NC}"
+	
+	if ! pgrep -af "mysqld" > /dev/null; then
+		echo -e "${ERROR} ${RED}MySQL server is not running! Please start MySQL first.${NC}"
+		return 1
+	fi
+	
+	echo -e "${BLUE}This will run mysql_secure_installation to:${NC}"
+	echo -e "  • Set root password"
+	echo -e "  • Remove anonymous users"
+	echo -e "  • Disable remote root login"
+	echo -e "  • Remove test database"
+	echo -e "  • Reload privilege tables"
+	echo
+	echo -e "${YELLOW}Do you want to continue? (y/n)${NC}"
+	read -n 1 -r
+	echo
+	
+	if [[ $REPLY =~ ^[Yy]$ ]]; then
+		echo -e "${YELLOW}Running MySQL security setup...${NC}"
+		nix-portable nix-shell -p mysql --run "
+			mysql_secure_installation --socket=$INSTALL_DIR/mysql/mysql.sock
+		"
+		echo -e "${SUCCESS} ${GREEN}MySQL security configuration completed!${NC}"
+	else
+		echo -e "${YELLOW}Security configuration cancelled.${NC}"
+	fi
+}
+
 
 setup_apache_php() {
   echo "php82" > $CONF_DIR/php-version.conf
@@ -155,6 +262,7 @@ EOF
 setup_mysql() {
 	echo -e "${YELLOW}Installing MySQL ${NC}"
 	install_mysql
+	config_mysql
 }
 
 setup_apachenest(){
@@ -227,6 +335,75 @@ stop_php(){
 	clear
 }
 
+start_mysql(){
+	# Ensure MySQL is configured first
+	config_mysql
+	
+	# Initialize database if not already done
+	if [[ ! -f $INSTALL_DIR/mysql/data/mysql/db.opt ]]; then
+		echo -e "${YELLOW}Initializing MySQL database...${NC}"
+		nix-portable nix-shell -p mysql --run "
+			mysql_install_db --defaults-file=$INSTALL_DIR/mysql/my.cnf --datadir=$INSTALL_DIR/mysql/data --user=\$(whoami)
+		" 2>/dev/null
+		echo -e "${CHECK} ${GREEN}MySQL database initialized!${NC}"
+	fi
+	
+	MYSQLD_LOG="$INSTALL_DIR/mysql/mysql.log"
+	echo -e "${YELLOW}Starting MySQL...${NC}"
+	nix-portable nix-shell -p mysql --run "
+		mysqld_safe --defaults-file=$INSTALL_DIR/mysql/my.cnf &
+	" > "$MYSQLD_LOG" 2>&1 &
+	
+	# Wait for MySQL to fully start and create socket
+	echo -e "${YELLOW}Waiting for MySQL to start...${NC}"
+	local wait_count=0
+	while [[ $wait_count -lt 30 ]]; do
+		if [[ -S $INSTALL_DIR/mysql/mysql.sock ]] && nix-portable nix-shell -p mysql --run "
+			mysqladmin --socket=$INSTALL_DIR/mysql/mysql.sock ping
+		" >/dev/null 2>&1; then
+			echo -e "${CHECK} ${GREEN}MySQL started successfully!${NC}"
+			break
+		fi
+		sleep 1
+		((wait_count++))
+		printf "."
+	done
+	
+	if [[ $wait_count -eq 30 ]]; then
+		echo -e "\n${ERROR} ${RED}MySQL failed to start properly. Check logs: $MYSQLD_LOG${NC}"
+	fi
+	
+	clear
+}
+
+stop_mysql(){
+	echo -e "${YELLOW}Stopping MySQL...${NC}"
+	
+	# Try graceful shutdown first using mysqladmin
+	if pgrep -af "mysqld" > /dev/null; then
+		nix-portable nix-shell -p mysql --run "
+			mysqladmin --socket=$INSTALL_DIR/mysql/mysql.sock shutdown
+		" 2>/dev/null || true
+		sleep 2
+	fi
+	
+	# Force kill if still running
+	if pgrep -af "mysqld" > /dev/null; then 
+		echo -e "${YELLOW}Force stopping MySQL processes...${NC}"
+		pkill -f "mysqld_safe" 2>/dev/null || true
+		pkill -f "mysqld" 2>/dev/null || true
+		sleep 2
+	fi
+	
+	# Clean up PID file
+	if [[ -f $INSTALL_DIR/mysql/mysql.pid ]]; then
+		rm -f "$INSTALL_DIR/mysql/mysql.pid"
+	fi
+	
+	echo -e "${CHECK} ${GREEN}MySQL stopped!${NC}"
+	clear
+}
+
 restart_apache(){
 	stop_apache && sleep 1
 	start_apache
@@ -237,9 +414,11 @@ restart_php(){
 	start_php
 }
 
+
 restart_all() {
 	restart_apache
 	restart_php
+	restart_mysql
 }
 
 start_all(){
@@ -249,18 +428,23 @@ start_all(){
 	if ! pgrep -af "$CONF_DIR/php-fpm.conf" > /dev/null; then 
 		start_php
 	fi
+	if ! pgrep -af "mysqld" > /dev/null; then 
+		start_mysql
+	fi
 	clear
 }
 
 stop_all(){
 	stop_apache
 	stop_php
+	stop_mysql
 	clear
 }
 
 restart(){
 	restart_apache
 	restart_php
+	restart_mysql
 	clear
 }
 
@@ -347,42 +531,36 @@ php_menu(){
 	clear
 }
 
-mysql_start() {
+restart_mysql() {
 	clear
+	stop_mysql
+	start_mysql
 }
 
-mysql_stop() {
-	clear
-}
 
-mysql_restart() {
-	clear
-	mysql_stop
-	mysql_start
-}
-
-mysql_reset() {
-	sh -c " \"\"'"
-}
 mysql_menu() {
 	clear
 	local ACTIONS
 	echo -e "\n${BLUE}${ROCKET} ${TITLE} ${ROCKET}${NC}"
 	while true; do
 		remove_dblock
-		ACTIONS=("Start" "Stop" "Restart" "Refresh")
+		ACTIONS=("Start" "Stop" "Restart" "Refresh" "Config" "Security")
 		
 		local SELECTED_ACTION=$(printf "%s\n" "${ACTIONS[@]}" | fzf --border --highlight-line --height=10% --layout=reverse --prompt="MySQL > ")
 		[[ -z $SELECTED_ACTION ]] && break
 		case $SELECTED_ACTION in
 			"Start")
-			 	echo -e "${YELLOW}MySQL start is not implemented yet.${NC}" ;;
+			 	start_mysql & spinner ;;
 			"Stop")
-			 	echo -e "${YELLOW}MySQL stop is not implemented yet.${NC}" ;;
+			 	stop_mysql & spinner ;;
 			"Restart")
-				echo -e "${YELLOW}MySQL restart is not implemented yet.${NC}" ;;
+				restart_mysql & spinner ;;
 			"Refresh")
 				refresh_menu ;;
+			"Config")
+				config_mysql ;;
+			"Security")
+				secure_mysql ;;
 		esac
 	done
 	clear
@@ -413,6 +591,11 @@ main_menu(){
 			else
 				echo 🟩Active 
 			fi)'"
+			echo -e "MySQL status: \t'$(if ! pgrep -af "mysqld" > /dev/null; then 
+				echo 🟥Inactive 
+			else
+				echo 🟩Active 
+			fi)'"
 		fi
 		if [[ $SELECTED == "Apache" ]]; then
 			echo "Status: '$(if ! pgrep -af "$CONF_DIR/httpd.conf" > /dev/null; then 
@@ -433,6 +616,16 @@ main_menu(){
 		  nix-portable nix-shell -p '$PHP_VERSION' --run "php -v" 2>/dev/null
 		  echo -e "\n===Logs===\n"
 		  [[ -f '$INSTALL_DIR'/php-fpm.log ]] && cat '$INSTALL_DIR'/php-fpm.log
+		fi
+		if [[ $SELECTED == "MySQL" ]]; then
+			echo "Status: '$(if ! pgrep -af "mysqld" > /dev/null; then 
+				echo 🟥Inactive 
+			else
+				echo 🟩Active 
+			fi)'"
+		  nix-portable nix-shell -p mysql --run "mysql --version" 2>/dev/null
+		  echo -e "\n===Logs===\n"
+		  [[ -f '$INSTALL_DIR'/mysql/mysql.log ]] && cat '$INSTALL_DIR'/mysql/mysql.log
 		fi
 		')
 		[[ -z $SELECTED_ACTION ]] && break
