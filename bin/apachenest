@@ -544,6 +544,262 @@ select_php() {
   install_php
 }
 
+# Show current PHP version and path info
+php_info() {
+	echo -e "${BLUE}=== PHP Information ===${NC}\n"
+	echo -e "${YELLOW}Current Version:${NC} $PHP_VERSION"
+	echo
+	
+	nix-portable nix-shell -p $PHP_VERSION --run "
+		echo -e '${YELLOW}PHP Version Details:${NC}'
+		php -v
+		echo
+		echo -e '${YELLOW}PHP Binary Path:${NC}'
+		which php
+		echo
+		echo -e '${YELLOW}PHP-FPM Binary Path:${NC}'
+		which php-fpm
+		echo
+		echo -e '${YELLOW}PHP Configuration File:${NC}'
+		php --ini | head -5
+	" 2>/dev/null
+	
+	echo
+	read -n 1 -s -p "Press any key to continue..."
+}
+
+# List installed PHP extensions
+php_extensions() {
+	echo -e "${BLUE}=== PHP Extensions ===${NC}\n"
+	echo -e "${YELLOW}Installed extensions for $PHP_VERSION:${NC}\n"
+	
+	nix-portable nix-shell -p $PHP_VERSION --run "
+		php -m
+	" 2>/dev/null | column
+	
+	echo
+	read -n 1 -s -p "Press any key to continue..."
+}
+
+# View phpinfo() in browser
+php_phpinfo() {
+	echo -e "${YELLOW}Creating phpinfo page...${NC}"
+	
+	# Create phpinfo file
+	echo '<?php phpinfo(); ?>' > "$WWW_DIR/phpinfo.php"
+	echo -e "${CHECK} ${GREEN}phpinfo.php created in $WWW_DIR${NC}"
+	
+	if ! pgrep -af "$CONF_DIR/httpd.conf" > /dev/null || ! pgrep -af "$CONF_DIR/php-fpm.conf" > /dev/null; then
+		echo -e "${YELLOW}Apache or PHP-FPM is not running.${NC}"
+		echo -e "${YELLOW}Start both services to view phpinfo in browser.${NC}"
+	else
+		echo -e "${BLUE}Opening phpinfo in browser...${NC}"
+		echo -e "${GREEN}URL: http://localhost:8080/phpinfo.php${NC}"
+		
+		if command -v xdg-open &> /dev/null; then
+			xdg-open "http://localhost:8080/phpinfo.php" 2>/dev/null &
+		elif command -v open &> /dev/null; then
+			open "http://localhost:8080/phpinfo.php" 2>/dev/null &
+		fi
+	fi
+	
+	read -n 1 -s -p "Press any key to continue..."
+}
+
+# Edit PHP configuration
+php_edit_config() {
+	echo -e "${BLUE}=== PHP Configuration ===${NC}\n"
+	
+	# Create custom php.ini if not exists
+	if [[ ! -f $CONF_DIR/php.ini ]]; then
+		echo -e "${YELLOW}Creating custom php.ini...${NC}"
+		cat > "$CONF_DIR/php.ini" <<EOF
+; ApacheNest Custom PHP Configuration
+; Add your PHP settings here
+
+[PHP]
+; Maximum execution time of each script, in seconds
+max_execution_time = 300
+
+; Maximum amount of memory a script may consume
+memory_limit = 256M
+
+; Maximum size of POST data that PHP will accept
+post_max_size = 64M
+
+; Maximum allowed size for uploaded files
+upload_max_filesize = 64M
+
+; Maximum number of files that can be uploaded via a single request
+max_file_uploads = 20
+
+; Default timezone
+date.timezone = UTC
+
+; Error reporting
+error_reporting = E_ALL
+display_errors = On
+display_startup_errors = On
+log_errors = On
+error_log = $INSTALL_DIR/php-error.log
+
+[opcache]
+opcache.enable = 1
+opcache.memory_consumption = 128
+opcache.interned_strings_buffer = 8
+opcache.max_accelerated_files = 10000
+opcache.validate_timestamps = 1
+opcache.revalidate_freq = 2
+
+[Session]
+session.save_path = $INSTALL_DIR/sessions
+
+[mail function]
+; For MailHog
+SMTP = localhost
+smtp_port = 1025
+EOF
+		
+		# Create sessions directory
+		mkdir -p "$INSTALL_DIR/sessions"
+		echo -e "${CHECK} ${GREEN}php.ini created!${NC}"
+	fi
+	
+	echo -e "${YELLOW}PHP Configuration File: $CONF_DIR/php.ini${NC}\n"
+	
+	# Show current settings
+	echo -e "${BLUE}Current Settings:${NC}"
+	cat "$CONF_DIR/php.ini" | grep -v "^;" | grep -v "^$" | head -20
+	echo -e "\n...(truncated)\n"
+	
+	echo -e "${YELLOW}Options:${NC}"
+	echo "1) Edit php.ini with nano"
+	echo "2) Edit php.ini with vim"
+	echo "3) View full php.ini"
+	echo "4) Reset to defaults"
+	echo "5) Back"
+	echo
+	read -p "Select option: " OPTION
+	
+	case $OPTION in
+		1)
+			nano "$CONF_DIR/php.ini" ;;
+		2)
+			vim "$CONF_DIR/php.ini" ;;
+		3)
+			less "$CONF_DIR/php.ini" ;;
+		4)
+			rm -f "$CONF_DIR/php.ini"
+			echo -e "${CHECK} ${GREEN}php.ini reset. Will be recreated with defaults.${NC}"
+			php_edit_config ;;
+		*)
+			return ;;
+	esac
+	
+	echo -e "\n${YELLOW}Note: Restart PHP-FPM for changes to take effect.${NC}"
+	read -n 1 -s -p "Press any key to continue..."
+}
+
+# View PHP logs
+php_logs() {
+	echo -e "${BLUE}=== PHP Logs ===${NC}\n"
+	
+	echo -e "${YELLOW}Select log to view:${NC}"
+	echo "1) PHP-FPM Log ($INSTALL_DIR/php-fpm.log)"
+	echo "2) PHP Error Log ($INSTALL_DIR/php-error.log)"
+	echo "3) Tail PHP-FPM Log (live)"
+	echo "4) Clear all PHP logs"
+	echo "5) Back"
+	echo
+	read -p "Select option: " OPTION
+	
+	case $OPTION in
+		1)
+			if [[ -f $INSTALL_DIR/php-fpm.log ]]; then
+				less "$INSTALL_DIR/php-fpm.log"
+			else
+				echo -e "${YELLOW}No PHP-FPM log file found.${NC}"
+				read -n 1 -s -p "Press any key to continue..."
+			fi ;;
+		2)
+			if [[ -f $INSTALL_DIR/php-error.log ]]; then
+				less "$INSTALL_DIR/php-error.log"
+			else
+				echo -e "${YELLOW}No PHP error log file found.${NC}"
+				read -n 1 -s -p "Press any key to continue..."
+			fi ;;
+		3)
+			echo -e "${YELLOW}Tailing PHP-FPM log (Ctrl+C to exit)...${NC}\n"
+			tail -f "$INSTALL_DIR/php-fpm.log" 2>/dev/null || echo "Log file not found." ;;
+		4)
+			echo -e "${YELLOW}Clearing PHP logs...${NC}"
+			> "$INSTALL_DIR/php-fpm.log" 2>/dev/null
+			> "$INSTALL_DIR/php-error.log" 2>/dev/null
+			echo -e "${CHECK} ${GREEN}PHP logs cleared!${NC}"
+			read -n 1 -s -p "Press any key to continue..." ;;
+		*)
+			return ;;
+	esac
+}
+
+# Clear OPcache
+php_clear_opcache() {
+	if ! pgrep -af "$CONF_DIR/php-fpm.conf" > /dev/null; then
+		echo -e "${ERROR} ${RED}PHP-FPM is not running! Please start PHP first.${NC}"
+		read -n 1 -s -p "Press any key to continue..."
+		return 1
+	fi
+	
+	echo -e "${YELLOW}Clearing OPcache...${NC}"
+	
+	# Create a temporary script to clear opcache
+	cat > "$WWW_DIR/opcache_clear.php" <<'EOF'
+<?php
+if (function_exists('opcache_reset')) {
+    opcache_reset();
+    echo "OPcache cleared successfully!";
+} else {
+    echo "OPcache is not available.";
+}
+?>
+EOF
+	
+	# Call the script
+	curl -s "http://localhost:8080/opcache_clear.php" 2>/dev/null || echo "Could not connect to server"
+	echo
+	
+	# Remove the temporary script
+	rm -f "$WWW_DIR/opcache_clear.php"
+	
+	echo -e "${CHECK} ${GREEN}OPcache clear attempted!${NC}"
+	read -n 1 -s -p "Press any key to continue..."
+}
+
+# PHP test script
+php_test() {
+	echo -e "${YELLOW}Running PHP test...${NC}\n"
+	
+	nix-portable nix-shell -p $PHP_VERSION --run "
+		echo '=== PHP Syntax Check ==='
+		php -v
+		echo
+		echo '=== Testing PHP execution ==='
+		php -r 'echo \"PHP is working! Current time: \" . date(\"Y-m-d H:i:s\") . \"\\n\";'
+		echo
+		echo '=== Checking common extensions ==='
+		php -r '
+			\$extensions = [\"pdo\", \"mysqli\", \"json\", \"mbstring\", \"curl\", \"openssl\", \"zip\", \"gd\"];
+			foreach (\$extensions as \$ext) {
+				\$status = extension_loaded(\$ext) ? \"✓\" : \"✗\";
+				echo \"  \$status \$ext\\n\";
+			}
+		'
+	" 2>/dev/null
+	
+	echo
+	read -n 1 -s -p "Press any key to continue..."
+}
+
 start_apache(){
 	nix-portable nix-shell -p apacheHttpd --run "
 		httpd -f $CONF_DIR/httpd.conf &
@@ -742,14 +998,16 @@ php_menu(){
 	local ACTIONS
 	while true; do
 		remove_dblock
-		printf "\n${BLUE}${ROCKET} ${TITLE} ${ROCKET}${NC}\n"
+		printf "\n${BLUE}${ROCKET} ${TITLE} - PHP ${ROCKET}${NC}\n"
+		echo -e "${YELLOW}Current Version: ${GREEN}$PHP_VERSION${NC}\n"
+		
 		ACTIONS=($(if ! pgrep -af "$CONF_DIR/php-fpm.conf" > /dev/null; then 
 			echo Start
 		else
 			echo Stop
-		fi) "Restart" "Change Version" "Refresh")
+		fi) "Restart" "Change Version" "PHP Info" "Extensions" "phpinfo()" "Configuration" "Logs" "Clear OPcache" "Test PHP" "Refresh")
 		
-		local SELECTED_ACTION=$(printf "%s\n" "${ACTIONS[@]}" | fzf --border --highlight-line --height=10% --layout=reverse --prompt="PHP > ")
+		local SELECTED_ACTION=$(printf "%s\n" "${ACTIONS[@]}" | fzf --border --highlight-line --height=18% --layout=reverse --prompt="PHP > ")
 		[[ -z $SELECTED_ACTION ]] && break
 		case $SELECTED_ACTION in
 			"Start")
@@ -758,10 +1016,24 @@ php_menu(){
 			 	stop_php & spinner ;;
 			"Restart")
 				restart_php & spinner ;;
-			"Refresh")
-				refresh_menu ;;
 			"Change Version")
 				select_php ;;
+			"PHP Info")
+				php_info ;;
+			"Extensions")
+				php_extensions ;;
+			"phpinfo()")
+				php_phpinfo ;;
+			"Configuration")
+				php_edit_config ;;
+			"Logs")
+				php_logs ;;
+			"Clear OPcache")
+				php_clear_opcache ;;
+			"Test PHP")
+				php_test ;;
+			"Refresh")
+				refresh_menu ;;
 		esac
 	done
 	clear
