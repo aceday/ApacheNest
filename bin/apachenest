@@ -99,6 +99,153 @@ install_mysql() {
 	fi
 }
 
+install_mailhog() {
+	if ! nix-portable nix path-info -f '<nixpkgs>' mailhog >/dev/null 2>&1; then
+		echo -e "${DOWNLOAD} ${YELLOW}Downloading MailHog...${NC}"
+		nix-portable nix-shell -p mailhog --run "" 2>/dev/null & spinner
+		echo -e "${CHECK} ${GREEN}Download complete!${NC}"
+	fi
+}
+
+config_mailhog() {
+	echo -e "${YELLOW}Setting up MailHog...${NC}"
+	
+	# Create MailHog directory
+	if [[ ! -d $INSTALL_DIR/mailhog ]]; then
+		mkdir -p "$INSTALL_DIR/mailhog"
+		echo -e "${CHECK} ${GREEN}MailHog directory created!${NC}"
+	fi
+	
+	# Create MailHog log file
+	if [[ ! -f $INSTALL_DIR/mailhog/mailhog.log ]]; then
+		touch "$INSTALL_DIR/mailhog/mailhog.log"
+		echo -e "${CHECK} ${GREEN}MailHog log file created!${NC}"
+	fi
+	
+	echo -e "${SUCCESS} ${GREEN}MailHog configuration complete!${NC}"
+	echo -e "${BLUE}SMTP Server: localhost:1025${NC}"
+	echo -e "${BLUE}Web UI: http://localhost:8025${NC}"
+}
+
+setup_mailhog() {
+	echo -e "${YELLOW}Installing MailHog ${NC}"
+	install_mailhog
+	config_mailhog
+}
+
+start_mailhog() {
+	config_mailhog
+	
+	if pgrep -af "MailHog" > /dev/null; then
+		echo -e "${YELLOW}MailHog is already running!${NC}"
+		return 0
+	fi
+	
+	echo -e "${YELLOW}Starting MailHog...${NC}"
+	nix-portable nix-shell -p mailhog --run "
+		MailHog > $INSTALL_DIR/mailhog/mailhog.log 2>&1 &
+	"
+	sleep 1
+	echo -e "${CHECK} ${GREEN}MailHog started!${NC}"
+	echo -e "${BLUE}SMTP Server: localhost:1025${NC}"
+	echo -e "${BLUE}Web UI: http://localhost:8025${NC}"
+	clear
+}
+
+stop_mailhog() {
+	echo -e "${YELLOW}Stopping MailHog...${NC}"
+	
+	if pgrep -af "MailHog" > /dev/null; then
+		pkill -f "MailHog" 2>/dev/null || true
+		sleep 1
+	fi
+	
+	echo -e "${CHECK} ${GREEN}MailHog stopped!${NC}"
+	clear
+}
+
+restart_mailhog() {
+	stop_mailhog
+	sleep 1
+	start_mailhog
+}
+
+config_php_mail() {
+	echo -e "${YELLOW}Configuring PHP to use MailHog...${NC}"
+	
+	# Create php.ini override for mail settings
+	cat > "$CONF_DIR/php-mail.ini" <<EOF
+[mail function]
+sendmail_path = "/usr/bin/env catchmail -smtp-addr localhost:1025"
+SMTP = localhost
+smtp_port = 1025
+EOF
+	
+	echo -e "${CHECK} ${GREEN}PHP mail configuration created!${NC}"
+	echo -e "${YELLOW}Note: Restart PHP-FPM for changes to take effect.${NC}"
+	read -n 1 -s -p "Press any key to continue..."
+}
+
+open_mailhog_ui() {
+	if ! pgrep -af "MailHog" > /dev/null; then
+		echo -e "${ERROR} ${RED}MailHog is not running! Please start MailHog first.${NC}"
+		read -n 1 -s -p "Press any key to continue..."
+		return 1
+	fi
+	
+	echo -e "${BLUE}Opening MailHog Web UI...${NC}"
+	echo -e "${GREEN}URL: http://localhost:8025${NC}"
+	
+	# Try to open in browser
+	if command -v xdg-open &> /dev/null; then
+		xdg-open "http://localhost:8025" 2>/dev/null &
+	elif command -v open &> /dev/null; then
+		open "http://localhost:8025" 2>/dev/null &
+	else
+		echo -e "${YELLOW}Please open http://localhost:8025 in your browser.${NC}"
+	fi
+	read -n 1 -s -p "Press any key to continue..."
+}
+
+test_email() {
+	if ! pgrep -af "MailHog" > /dev/null; then
+		echo -e "${ERROR} ${RED}MailHog is not running! Please start MailHog first.${NC}"
+		read -n 1 -s -p "Press any key to continue..."
+		return 1
+	fi
+	
+	echo -e "${YELLOW}Sending test email...${NC}"
+	
+	# Create a simple test email using sendmail format
+	echo -e "Subject: Test Email from ApacheNest\nFrom: test@apachenest.local\nTo: user@example.com\n\nThis is a test email from ApacheNest MailHog.\nIf you see this in MailHog UI, email is working!" | \
+	nix-portable nix-shell -p mailhog --run "MailHog sendmail" 2>/dev/null || \
+	(
+		# Alternative: use nc/netcat to send directly to SMTP
+		{
+			echo "EHLO localhost"
+			sleep 0.2
+			echo "MAIL FROM:<test@apachenest.local>"
+			sleep 0.2
+			echo "RCPT TO:<user@example.com>"
+			sleep 0.2
+			echo "DATA"
+			sleep 0.2
+			echo "Subject: Test Email from ApacheNest"
+			echo "From: test@apachenest.local"
+			echo "To: user@example.com"
+			echo ""
+			echo "This is a test email from ApacheNest MailHog."
+			echo "If you see this in MailHog UI, email is working!"
+			echo "."
+			sleep 0.2
+			echo "QUIT"
+		} | nc localhost 1025 2>/dev/null
+	)
+	
+	echo -e "${SUCCESS} ${GREEN}Test email sent! Check MailHog UI at http://localhost:8025${NC}"
+	read -n 1 -s -p "Press any key to continue..."
+}
+
 config_mysql() {
 	echo -e "${YELLOW}Setting up MySQL...${NC}"
 	
@@ -362,6 +509,7 @@ setup_apachenest(){
 	setup_configs
 
 	setup_mysql
+	setup_mailhog
 }
 
 select_php() {
@@ -501,6 +649,7 @@ restart_all() {
 	restart_apache
 	restart_php
 	restart_mysql
+	restart_mailhog
 }
 
 start_all(){
@@ -513,6 +662,9 @@ start_all(){
 	if ! pgrep -af "mysqld" > /dev/null; then 
 		start_mysql
 	fi
+	if ! pgrep -af "MailHog" > /dev/null; then 
+		start_mailhog
+	fi
 	clear
 }
 
@@ -520,6 +672,7 @@ stop_all(){
 	stop_apache
 	stop_php
 	stop_mysql
+	stop_mailhog
 	clear
 }
 
@@ -527,6 +680,7 @@ restart(){
 	restart_apache
 	restart_php
 	restart_mysql
+	restart_mailhog
 	clear
 }
 
@@ -651,6 +805,44 @@ mysql_menu() {
 	clear
 }
 
+mail_menu() {
+	clear
+	local ACTIONS
+	echo -e "\n${BLUE}${ROCKET} ${TITLE} - Mail Server ${ROCKET}${NC}"
+	echo -e "${YELLOW}MailHog - Email Testing Tool${NC}"
+	echo -e "${BLUE}SMTP: localhost:1025 | Web UI: http://localhost:8025${NC}\n"
+	while true; do
+		remove_dblock
+		ACTIONS=($(if ! pgrep -af "MailHog" > /dev/null; then 
+			echo Start
+		else
+			echo Stop
+		fi) "Restart" "Open Web UI" "Send Test Email" "Configure PHP" "Config" "Refresh")
+		
+		local SELECTED_ACTION=$(printf "%s\n" "${ACTIONS[@]}" | fzf --border --highlight-line --height=15% --layout=reverse --prompt="Mail > ")
+		[[ -z $SELECTED_ACTION ]] && break
+		case $SELECTED_ACTION in
+			"Start")
+			 	start_mailhog & spinner ;;
+			"Stop")
+			 	stop_mailhog & spinner ;;
+			"Restart")
+				restart_mailhog & spinner ;;
+			"Open Web UI")
+				open_mailhog_ui ;;
+			"Send Test Email")
+				test_email ;;
+			"Configure PHP")
+				config_php_mail ;;
+			"Config")
+				config_mailhog ;;
+			"Refresh")
+				refresh_menu ;;
+		esac
+	done
+	clear
+}
+
 refresh_menu() {
 	clear
 }
@@ -658,11 +850,11 @@ refresh_menu() {
 main_menu(){
 	clear
 	local ACTIONS
-	ACTIONS=("All" "Apache" "PHP" "MySQL" "Refresh" "Settings" "About" "Exit")
+	ACTIONS=("All" "Apache" "PHP" "MySQL" "Mail" "Refresh" "Settings" "About" "Exit")
 	while true; do
 		remove_dblock
 		printf "\n${BLUE}${ROCKET} ${TITLE} ${ROCKET}${NC}\n"
-		local SELECTED_ACTION=$(printf "%s\n" "${ACTIONS[@]}" | fzf --border --highlight-line --height=10% --layout=reverse \
+		local SELECTED_ACTION=$(printf "%s\n" "${ACTIONS[@]}" | fzf --border --highlight-line --height=12% --layout=reverse \
 		--preview-window=80%:wrap --preview='
 		SELECTED={}
 		if [[ $SELECTED == "All" ]]; then
@@ -677,6 +869,11 @@ main_menu(){
 				echo 🟩Active 
 			fi)'"
 			echo -e "MySQL status: \t'$(if ! pgrep -af "mysqld" > /dev/null; then 
+				echo 🟥Inactive 
+			else
+				echo 🟩Active 
+			fi)'"
+			echo -e "Mail status: \t'$(if ! pgrep -af "MailHog" > /dev/null; then 
 				echo 🟥Inactive 
 			else
 				echo 🟩Active 
@@ -712,6 +909,18 @@ main_menu(){
 		  echo -e "\n===Logs===\n"
 		  [[ -f '$INSTALL_DIR'/mysql/mysql.log ]] && cat '$INSTALL_DIR'/mysql/mysql.log
 		fi
+		if [[ $SELECTED == "Mail" ]]; then
+			echo "Status: '$(if ! pgrep -af "MailHog" > /dev/null; then 
+				echo 🟥Inactive 
+			else
+				echo 🟩Active 
+			fi)'"
+			echo -e "\nMailHog - Email Testing Tool"
+			echo -e "SMTP Server: localhost:1025"
+			echo -e "Web UI: http://localhost:8025"
+			echo -e "\n===Logs===\n"
+			[[ -f '$INSTALL_DIR'/mailhog/mailhog.log ]] && tail -20 '$INSTALL_DIR'/mailhog/mailhog.log
+		fi
 		')
 		[[ -z $SELECTED_ACTION ]] && break
 		case $SELECTED_ACTION in
@@ -723,6 +932,8 @@ main_menu(){
 			 	php_menu ;;
 			"MySQL")
 				mysql_menu ;;
+			"Mail")
+				mail_menu ;;
 			"Refresh")
 				refresh_menu ;;
 			"Settings")
